@@ -1,5 +1,5 @@
 # Conceptual questions
-The following tasks are meant to test your ability to design an architecture for analytics and machine learning applications. Please be as specific as possible in your responses and elaborate on your decisions. Include any illustrations (like high-level architecture diagram) that you feel will support your answer. No coding is required in this section.
+The following tasks are meant to test your ability to design an architecture for analytics and machine learning applications. Please be as specific as possible in your responses and elaborate on your decisions. Include any illustrations (like high-level architecture diagram) that you feel will support your answer. No coding is required in this section, but please do not use ChatGPT 🙂
 
 Spond has multiple sources of data that pertain to different areas of the business. Generally speaking, the three main categories are 1) internal application data, 2) external vendor data, and 3) other third party data.
 
