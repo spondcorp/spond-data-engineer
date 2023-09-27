@@ -1,0 +1,16 @@
+[tool.ruff]
+
+select = ["A", "E", "F", "I", "N", "W", "C4", "PT", "SIM", "ICN", "ISC", "DTZ", "COM"]
+ignore = ["N812"]
+line-length = 120
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Assume Python 3.9
+target-version = "py39"
+
+[tool.black]
+line-length = 120
+# Assume Python 3.9
+target-version = ["py39"]

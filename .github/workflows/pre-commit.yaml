@@ -1,0 +1,36 @@
+---
+name: pre-commit
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# This workflow is only relevant for the latest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github-ref_name || github.run_id}}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install pre-commit
+        shell: bash
+        run: python -m pip install pre-commit
+
+      # Cache the requirements for the hooks to speed up workflow and reduce the action's cost
+      - name: Cache pre-commit
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        shell: bash
+        run: pre-commit run -a --show-diff-on-failure --color=always
