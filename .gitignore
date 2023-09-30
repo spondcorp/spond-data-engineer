@@ -1,1 +1,4 @@
 test.ipynb
+datalake/**
+.ruff_cache/**
+assignment.md
