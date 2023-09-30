@@ -26,3 +26,8 @@ python3 coding-questions/2-2/scd2.py
 ```
 [//]: # (TODO: Add paths)
 The output will be available under ...
+
+Or simply run the image and the two scripts will execute
+```commandline
+docker run spond-data-engineer
+```
