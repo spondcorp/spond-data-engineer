@@ -10,6 +10,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # Assume Python 3.9
 target-version = "py39"
 
+[tool.ruff.isort]
+known-first-party = ["coding_questions"]
+
 [tool.black]
 line-length = 120
 # Assume Python 3.9

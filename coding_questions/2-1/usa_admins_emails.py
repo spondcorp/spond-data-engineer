@@ -1,49 +1,20 @@
 import logging
 import os
 import sys
-from typing import Union
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
-from pyspark import SparkConf
 from pyspark.sql import DataFrame
-from pyspark.sql.session import SparkSession
+
+from coding_questions.utils import get_spark_session
 
 
-def get_spark_session(settings: Union[None, dict[str, str]] = None) -> SparkSession:
-    """
-    Helper function to build and return a Spark session with default settings.
-    """
-    if settings is None:
-        settings = {}
-    default_settings = {
-        "spark.app.name": "spond-spark",
-        "spark.default.parallelism": 1,
-        "spark.dynamicAllocation.enabled": "false",
-        "spark.executor.cores": 1,
-        "spark.executor.instances": 1,
-        "spark.io.compression.codec": "lz4",
-        "spark.rdd.compress": "false",
-        "spark.sql.shuffle.partitions": 1,
-        "spark.shuffle.compress": "false",
-        "spark.sql.session.timeZone": "UTC",
-    }
-
-    spark_conf_settings = {**default_settings, **settings}
-
-    spark_conf = SparkConf().setAll(list(spark_conf_settings.items()))
-
-    return SparkSession.builder.config(conf=spark_conf).master("local[1]").getOrCreate()
-
-
-spark = get_spark_session()
-
-
-# Parquet files are self-describing so there's no need to define the schema on read as it will be preserved
-# Some checks could be done on the columns to check for case, spacing, etc.
-# but the data is clean so I will work on that assumption
-# TODO: Remove unnecessary columns
 def retrieve_corrupt_records(df: DataFrame) -> DataFrame:
+    """
+    Retrieve the corrupt records from the parquet file.
+    This function caters for a specific type of corrupt file where removing the first and last characters would result
+    in a valid JSON string that maps to the dataset fully.
+    """
     corrupt_record_col_name = "_corrupt_record"
     corrupt_record_col = F.col(corrupt_record_col_name)
 
@@ -78,24 +49,32 @@ def retrieve_corrupt_records(df: DataFrame) -> DataFrame:
     return df
 
 
-def read_groups_data(
-    path: str = sys.argv[0] + os.sep + "../../../datalake/group",
-) -> DataFrame:
-    return retrieve_corrupt_records(spark.read.parquet(path))
+def read_groups_data(path: str = sys.argv[0] + os.sep + "../../../datalake/group") -> DataFrame:
+    """
+    Read the groups dataset from a given path, fix the corrupt record, and return a DataFrame with select columns.
+    """
+    logging.info("Reading groups data")
+    # Parquet files are self-describing so there's no need to define the schema on read as it will be preserved.
+    # Some checks could be done on the columns to check for quality such as case and spacing but the data is clean, so
+    # I will work on that assumption
+    return retrieve_corrupt_records(spark.read.parquet(path)).select(
+        # Only select the columns that are needed in order to reduce the amount of data being moved around
+        "profile_id",
+        "country_code",
+        "group_name",
+    )
 
 
-def read_profiles_data(
-    path: str = sys.argv[0] + os.sep + "../../../datalake/group",
-) -> DataFrame:
+def read_profiles_data(path: str = sys.argv[0] + os.sep + "../../../datalake/group") -> DataFrame:
+    """
+    Read the profiles dataset from a given path and return a DataFrame with select columns.
+    """
+    logging.info("Reading profiles data")
     profiles_schema = T.StructType(
         [
+            # Only select the columns that are needed in order to reduce the amount of data being moved around
             T.StructField("email", T.StringType(), True),
-            T.StructField("externalid", T.StringType(), True),
-            T.StructField("first_name", T.StringType(), True),
-            T.StructField("gender", T.StringType(), True),
-            T.StructField("last_name", T.StringType(), True),
             T.StructField("profile_id", T.IntegerType(), True),
-            T.StructField("created_at", T.DateType(), True),
         ],
     )
 
@@ -110,9 +89,11 @@ def read_profiles_data(
     return spark.read.option("multiline", "true").json(path, schema=profiles_schema)
 
 
-def read_unsubscribe_data(
-    path: str = sys.argv[0] + os.sep + "../../../datalake/unsubscribe",
-) -> DataFrame:
+def read_unsubscribe_data(path: str = sys.argv[0] + os.sep + "../../../datalake/unsubscribe") -> DataFrame:
+    """
+    Read the unsubscribe dataset from a given path, remove invalid emails, and return a DataFrame.
+    """
+    logging.info("Reading unsubscribe data")
     unsubscribe_schema = T.StructType(
         [
             T.StructField("email", T.StringType(), True),
@@ -143,6 +124,7 @@ def read_unsubscribe_data(
 
 
 if __name__ == "__main__":
+    spark = get_spark_session()
     groups_df = read_groups_data()
     profiles_df = read_profiles_data()
     unsubscribe_df = read_unsubscribe_data()
@@ -151,17 +133,19 @@ if __name__ == "__main__":
         F.col("group_name").isin("Running Club", "Tennis Club"),
     )
 
+    # Use the groups dataset as the base and get all the emails from the profiles dataset using a left join
+    # Use an exclusive/anti join to eliminate the rows with unsubscribed emails from the result of the first join
     email_list_df = (
         usa_running_and_tennis_groups_df.alias("groups")
         .join(
             profiles_df.alias("profiles"),
-            F.col("groups.profile_id") == F.col("profiles.profile_id"),
+            F.col("groups.profile_id").eqNullSafe(F.col("profiles.profile_id")),
             "left",
         )
         .alias("base")
         .join(
             unsubscribe_df.alias("unsubscribe"),
-            F.col("base.email") == F.col("unsubscribe.email"),
+            F.col("base.email").eqNullSafe(F.col("unsubscribe.email")),
             "left_anti",
         )
     )
@@ -170,3 +154,4 @@ if __name__ == "__main__":
     logging.warning(f"Found {invalid_emails_df.count()} null email(s) for group admins)")
 
     valid_emails_df = email_list_df.where(F.col("email").isNotNull()).distinct()
+    logging.info("Writing list of admin emails")

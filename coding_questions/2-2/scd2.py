@@ -2,14 +2,13 @@ import datetime as dt
 import logging
 import os
 import sys
-from typing import Union
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 import pytz
-from pyspark import SparkConf
 from pyspark.sql import DataFrame
-from pyspark.sql.session import SparkSession
+
+from coding_questions.utils import get_spark_session
 
 
 def get_base_fields() -> list[T.StructField]:
@@ -35,7 +34,7 @@ def read_new_profiles(
     A ´valid_from´ and ´valid_to´ column are defined to conform to the same schema as the historical dataset.
     The two columns are also set to their correct values should they be needed for row updates or creation.
     """
-
+    logging.info("Reading new profiles data")
     return spark.read.json(
         path,
         schema=T.StructType(get_base_fields()),
@@ -55,6 +54,8 @@ def read_profile_history(
     The source dataset holds the ´valid_from´ and ´valid_to´ columns as unix timestamps of type Long; the function
      parses these columns into human-friendly values of type Timestamp
     """
+
+    logging.info("Reading historical profiles data")
 
     schema = T.StructType(
         get_base_fields()
@@ -85,6 +86,8 @@ def scd2_join(base_df: DataFrame, updates_df: DataFrame) -> DataFrame:
     - `noop`: Row exists in both datasets and the values are the same
     - `unknown`: None of the above or the join condition is null in both datasets
     """
+
+    logging.info("Performing SCD2 join")
     # join the two datasets while keeping all rows from both sides to allow further comparison
     return (
         base_df.alias("base")
@@ -141,6 +144,7 @@ def execute_scd2(df: DataFrame) -> DataFrame:
     # For rows that require update or delete actions, the rows need to be closed by setting valid_to to the current date
     # and keeping the old values which come from the base dataset
     # For rows that are noop then they should be kept without change
+    logging.info("Executing SCD2 join")
     base_df = (
         df.where(F.col("action").isin("delete", "noop", "update"))
         .select("base.*", "action")
@@ -162,32 +166,6 @@ def execute_scd2(df: DataFrame) -> DataFrame:
     return base_df.unionAll(updates_df)
 
 
-def get_spark_session(settings: Union[None, dict[str, str]] = None) -> SparkSession:
-    """
-    Helper function to build and return a Spark session with default settings.
-    """
-    if settings is None:
-        settings = {}
-    default_settings = {
-        "spark.app.name": "spond-spark",
-        "spark.default.parallelism": 1,
-        "spark.dynamicAllocation.enabled": "false",
-        "spark.executor.cores": 1,
-        "spark.executor.instances": 1,
-        "spark.io.compression.codec": "lz4",
-        "spark.rdd.compress": "false",
-        "spark.sql.shuffle.partitions": 1,
-        "spark.shuffle.compress": "false",
-        "spark.sql.session.timeZone": "UTC",
-    }
-
-    spark_conf_settings = {**default_settings, **settings}
-
-    spark_conf = SparkConf().setAll(list(spark_conf_settings.items()))
-
-    return SparkSession.builder.config(conf=spark_conf).master("local[1]").getOrCreate()
-
-
 if __name__ == "__main__":
     spark = get_spark_session()
 
@@ -203,4 +181,6 @@ if __name__ == "__main__":
     deleted_ids = joined_df.where(F.col("action") == F.lit("delete")).select("base.profile_id")
     table_path = sys.argv[0] + os.sep + "../profiles"
     logging.info(f"Writing output dataset to {table_path}")
-    execute_scd2(joined_df).coalesce(1).write.mode("overwrite").save(table_path, "parquet")
+    # The `coalesce` ensures only 1 file is written out as the dataset is small. Without it, in this case, there will be
+    # 2 files because the data comes from two separate partitions, one for each of the base and updates dataframes
+    execute_scd2(joined_df).coalesce(1).write.mode("overwrite").format("parquet").save(table_path)
