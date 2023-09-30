@@ -1,4 +1,7 @@
 import logging
+import os
+import sys
+from typing import Union
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
@@ -6,36 +9,45 @@ from pyspark import SparkConf
 from pyspark.sql import DataFrame
 from pyspark.sql.session import SparkSession
 
-spark_conf_settings = {
-    "spark.app.name": "spond-spark",
-    "spark.default.parallelism": 1,
-    "spark.dynamicAllocation.enabled": "false",
-    "spark.executor.cores": 1,
-    "spark.executor.instances": 1,
-    "spark.io.compression.codec": "lz4",
-    "spark.rdd.compress": "false",
-    "spark.sql.shuffle.partitions": 1,
-    "spark.shuffle.compress": "false",
-    "spark.jars.packages": "io.delta:delta-core_2.12:2.3.0",
-    "spark.sql.extensions": "io.delta.sql.DeltaSparkSessionExtension",
-    "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.delta.catalog.DeltaCatalog",
-    "spark.sql.catalogImplementation": "in-memory",
-}
 
-spark_conf = SparkConf().setAll(list(spark_conf_settings.items()))
+def get_spark_session(settings: Union[None, dict[str, str]] = None) -> SparkSession:
+    """
+    Helper function to build and return a Spark session with default settings.
+    """
+    if settings is None:
+        settings = {}
+    default_settings = {
+        "spark.app.name": "spond-spark",
+        "spark.default.parallelism": 1,
+        "spark.dynamicAllocation.enabled": "false",
+        "spark.executor.cores": 1,
+        "spark.executor.instances": 1,
+        "spark.io.compression.codec": "lz4",
+        "spark.rdd.compress": "false",
+        "spark.sql.shuffle.partitions": 1,
+        "spark.shuffle.compress": "false",
+        "spark.sql.session.timeZone": "UTC",
+    }
 
-spark = SparkSession.builder.config(conf=spark_conf).master("local[1]").getOrCreate()
+    spark_conf_settings = {**default_settings, **settings}
+
+    spark_conf = SparkConf().setAll(list(spark_conf_settings.items()))
+
+    return SparkSession.builder.config(conf=spark_conf).master("local[1]").getOrCreate()
+
+
+spark = get_spark_session()
 
 
 # Parquet files are self-describing so there's no need to define the schema on read as it will be preserved
 # Some checks could be done on the columns to check for case, spacing, etc.
 # but the data is clean so I will work on that assumption
-# TODO: Fix Path
 # TODO: Remove unnecessary columns
 def retrieve_corrupt_records(df: DataFrame) -> DataFrame:
-    corrupt_record_col = F.col("_corrupt_record")
+    corrupt_record_col_name = "_corrupt_record"
+    corrupt_record_col = F.col(corrupt_record_col_name)
 
-    schema = df.drop(corrupt_record_col).schema
+    schema = df.drop(corrupt_record_col_name).schema
 
     # Tidy the corrupt records so the string become a valid JSON
     clean_record = F.when(
@@ -67,13 +79,13 @@ def retrieve_corrupt_records(df: DataFrame) -> DataFrame:
 
 
 def read_groups_data(
-    path: str = "/Users/ehab-personal/PycharmProjects/spond-data-engineer/datalake/group",
+    path: str = sys.argv[0] + os.sep + "../../../datalake/group",
 ) -> DataFrame:
     return retrieve_corrupt_records(spark.read.parquet(path))
 
 
 def read_profiles_data(
-    path: str = "/Users/ehab-personal/PycharmProjects/spond-data-engineer/datalake/group",
+    path: str = sys.argv[0] + os.sep + "../../../datalake/group",
 ) -> DataFrame:
     profiles_schema = T.StructType(
         [
@@ -99,7 +111,7 @@ def read_profiles_data(
 
 
 def read_unsubscribe_data(
-    path: str = "/Users/ehab-personal/PycharmProjects/spond-data-engineer/datalake/unsubscribe",
+    path: str = sys.argv[0] + os.sep + "../../../datalake/unsubscribe",
 ) -> DataFrame:
     unsubscribe_schema = T.StructType(
         [
@@ -130,30 +142,31 @@ def read_unsubscribe_data(
     return df.where(email_is_valid)
 
 
-groups_df = read_groups_data()
-profiles_df = read_profiles_data()
-unsubscribe_df = read_unsubscribe_data()
+if __name__ == "__main__":
+    groups_df = read_groups_data()
+    profiles_df = read_profiles_data()
+    unsubscribe_df = read_unsubscribe_data()
 
-usa_running_and_tennis_groups_df = groups_df.where(F.col("country_code") == "USA").where(
-    F.col("group_name").isin("Running Club", "Tennis Club"),
-)
-
-email_list_df = (
-    usa_running_and_tennis_groups_df.alias("groups")
-    .join(
-        profiles_df.alias("profiles"),
-        F.col("groups.profile_id") == F.col("profiles.profile_id"),
-        "left",
+    usa_running_and_tennis_groups_df = groups_df.where(F.col("country_code") == "USA").where(
+        F.col("group_name").isin("Running Club", "Tennis Club"),
     )
-    .alias("base")
-    .join(
-        unsubscribe_df.alias("unsubscribe"),
-        F.col("base.email") == F.col("unsubscribe.email"),
-        "left_anti",
+
+    email_list_df = (
+        usa_running_and_tennis_groups_df.alias("groups")
+        .join(
+            profiles_df.alias("profiles"),
+            F.col("groups.profile_id") == F.col("profiles.profile_id"),
+            "left",
+        )
+        .alias("base")
+        .join(
+            unsubscribe_df.alias("unsubscribe"),
+            F.col("base.email") == F.col("unsubscribe.email"),
+            "left_anti",
+        )
     )
-)
 
-invalid_emails_df = email_list_df.where(F.col("email").isNull())
-logging.warning(f"Found {invalid_emails_df.count()} null email(s) for group admins)")
+    invalid_emails_df = email_list_df.where(F.col("email").isNull())
+    logging.warning(f"Found {invalid_emails_df.count()} null email(s) for group admins)")
 
-valid_emails_df = email_list_df.where(F.col("email").isNotNull()).distinct()
+    valid_emails_df = email_list_df.where(F.col("email").isNotNull()).distinct()

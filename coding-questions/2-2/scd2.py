@@ -1,4 +1,7 @@
 import datetime as dt
+import logging
+import os
+import sys
 from typing import Union
 
 import pyspark.sql.functions as F
@@ -24,9 +27,8 @@ def get_base_fields() -> list[T.StructField]:
     ]
 
 
-# TODO: fix path
 def read_new_profiles(
-    path: str = "/Users/ehab-personal/PycharmProjects/spond-data-engineer/datalake/profiles_history/new_profiles.json",
+    path: str = sys.argv[0] + os.sep + "../../../datalake/profiles_history/new_profiles.json",
 ) -> DataFrame:
     """
     Read the new profiles dataset from a given path and return it as a DataFrame.
@@ -45,11 +47,8 @@ def read_new_profiles(
     )
 
 
-# TODO: fix path
 def read_profile_history(
-    path: str = (
-        "/Users/ehab-personal/PycharmProjects/spond-data-engineer/datalake/profiles_history/profiles_history.json"
-    ),
+    path: str = (sys.argv[0] + os.sep + "../../../datalake/profiles_history/profiles_history.json"),
 ) -> DataFrame:
     """
     Read the historical profiles dataset from a given path and return it as a DataFrame
@@ -202,5 +201,6 @@ if __name__ == "__main__":
 
     updated_ids = joined_df.where(F.col("action") == F.lit("update")).select("base.profile_id")
     deleted_ids = joined_df.where(F.col("action") == F.lit("delete")).select("base.profile_id")
-
-    execute_scd2(joined_df).coalesce(1).write.mode("overwrite").save("profiles", "parquet")
+    table_path = sys.argv[0] + os.sep + "../profiles"
+    logging.info(f"Writing output dataset to {table_path}")
+    execute_scd2(joined_df).coalesce(1).write.mode("overwrite").save(table_path, "parquet")
