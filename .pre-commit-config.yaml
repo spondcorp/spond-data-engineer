@@ -4,12 +4,13 @@ repos:
     rev: v4.4.0
     hooks:
     - id: end-of-file-fixer
+      exclude: datalake\/.*profile\.json
     - id: trailing-whitespace
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.0.291
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix, --exit-non-zero-on-fix, --respect-gitignore]
   - repo: https://github.com/psf/black
     rev: 23.9.1
     hooks:
