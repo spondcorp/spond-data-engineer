@@ -101,12 +101,12 @@ def scd2_join(base_df: DataFrame, updates_df: DataFrame) -> DataFrame:
             F.when(
                 # If the row exists in the base but not the updates then the profile has been deleted
                 F.col("base.profile_id").isNotNull() & F.col("updates.profile_id").isNull(),
-                F.lit("delete"),
+                F.lit(Scd2Actions().delete),
             )
             .when(
                 # If the row exists in the updates but not the base then the profile has been newly created
                 F.col("base.profile_id").isNull() & F.col("updates.profile_id").isNotNull(),
-                F.lit("add"),
+                F.lit(Scd2Actions().add),
             )
             .when(
                 # If the row exists in both datasets then we need to further examine it to understand the needed change
@@ -122,15 +122,15 @@ def scd2_join(base_df: DataFrame, updates_df: DataFrame) -> DataFrame:
                         & F.col("base.gender").eqNullSafe(F.col("updates.gender"))
                         & F.col("base.external_id").eqNullSafe(F.col("updates.external_id"))
                     ),
-                    "noop",
+                    F.lit(Scd2Actions().noop),
                 ).otherwise(
                     # If the previous condition was false then some values have changed and an update is needed
-                    "update",
+                    F.lit(Scd2Actions().update),
                 ),
             )
             .otherwise(
                 # This shouldn't happen unless the data is bad, but it's good practice to keep a fallback
-                "unknown",
+                F.lit(Scd2Actions().unknown),
             ),
         )
     )
@@ -146,12 +146,12 @@ def execute_scd2(df: DataFrame) -> DataFrame:
     # For rows that are noop then they should be kept without change
     logging.info("Executing SCD2 join")
     base_df = (
-        df.where(F.col("action").isin("delete", "noop", "update"))
+        df.where(F.col("action").isin(Scd2Actions().delete, Scd2Actions().noop, Scd2Actions().update))
         .select("base.*", "action")
         .withColumn(
             "valid_to",
             F.when(
-                F.col("action").isin("delete", "update"),
+                F.col("action").isin(Scd2Actions().delete, Scd2Actions().update),
                 now_col,
             ),
         )
@@ -160,10 +160,43 @@ def execute_scd2(df: DataFrame) -> DataFrame:
 
     # For rows that require add or update actions, no further change is needed. However, the new values should be
     # preserved from the updates dataset
-    updates_df = df.where(F.col("action").isin("add", "update")).select("updates.*", "action").drop("action")
+    updates_df = (
+        df.where(F.col("action").isin(Scd2Actions().add, Scd2Actions().update))
+        .select("updates.*", "action")
+        .drop("action")
+    )
 
     # Union both results to create the new dataset
     return base_df.unionAll(updates_df)
+
+
+class Scd2Actions:
+    """
+    A simple class that returns set int values for actions defined as properties.
+
+    This ensures that there are no differences between creating the action column and filtering on them later.
+    Also using ints is much faster for processing than strings.
+    """
+
+    @property
+    def add(self):
+        return 1
+
+    @property
+    def update(self):
+        return 2
+
+    @property
+    def delete(self):
+        return 3
+
+    @property
+    def noop(self):
+        return 4
+
+    @property
+    def unknown(self):
+        return 5
 
 
 if __name__ == "__main__":
@@ -177,8 +210,8 @@ if __name__ == "__main__":
 
     joined_df = scd2_join(read_profile_history(), read_new_profiles())
 
-    updated_ids = joined_df.where(F.col("action") == F.lit("update")).select("base.profile_id")
-    deleted_ids = joined_df.where(F.col("action") == F.lit("delete")).select("base.profile_id")
+    updated_ids = joined_df.where(F.col("action") == F.lit(Scd2Actions().update)).select("base.profile_id")
+    deleted_ids = joined_df.where(F.col("action") == F.lit(Scd2Actions().delete)).select("base.profile_id")
     table_path = sys.argv[0] + os.sep + "../profiles"
     logging.info(f"Writing output dataset to {table_path}")
     # The `coalesce` ensures only 1 file is written out as the dataset is small. Without it, in this case, there will be
